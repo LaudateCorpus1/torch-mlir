@@ -50,7 +50,26 @@ public:
       if (auto copyToValueTensor = dyn_cast<CopyToValueTensorOp>(user)) {
         rewriter.replaceOp(copyToValueTensor, {currentlyHeldValueTensor});
       } else if (auto overwriteTensor = dyn_cast<OverwriteTensorOp>(user)) {
-        currentlyHeldValueTensor = overwriteTensor.value();
+        Location loc = user->getLoc();
+        Value overwriter = overwriteTensor.value();
+        Value overwritten = overwriteTensor.overwritten();
+        Type overwrittenType = overwritten.getType()
+                                   .dyn_cast<NonValueTensorType>()
+                                   .getWithValueSemantics();
+
+        // Sometimes the overwriter tensor has a different type from the
+        // overwritten tensor. This can happen, for example, if one tensor
+        // has dynamic shape and the other has a static shape. Since the goal
+        // of this pattern is to replace uses of the overwritten tensor with
+        // overwriter tensor, here we cast the overwriter to the type of the
+        // overwritten, to avoid type mismatches later on in the graph.
+        {
+          PatternRewriter::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPointAfter(overwriteTensor);
+          currentlyHeldValueTensor = rewriter.create<TensorStaticInfoCastOp>(
+              loc, overwrittenType, overwriter);
+        }
+
         rewriter.eraseOp(overwriteTensor);
       } else {
         llvm_unreachable("only those ops supported!");
